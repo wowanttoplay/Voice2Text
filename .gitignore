@@ -1,0 +1,7 @@
+# 忽略pyinstaller生成的文件
+Client/dist/
+Client/build/
+Client/*.spec
+Server/dist/
+Server/build/
+Server/*.spec
