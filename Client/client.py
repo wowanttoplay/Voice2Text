@@ -4,6 +4,8 @@ from tkinter import Tk, filedialog, StringVar, IntVar, Scrollbar, Canvas, VERTIC
 import openpyxl
 import ttkbootstrap as ttk
 import threading
+import datetime
+from pypinyin import lazy_pinyin
 
 def process_audio_file(file_path, server_url):
     process_audio_url = f"{server_url}/process_audio"
@@ -243,7 +245,7 @@ class Application:
             if not any(file_name.lower().endswith(ext) for ext in audio_extensions):
                 continue
             for string in string_list:
-                if string in file_name:
+                if f"{string}_" in file_name:
                     string_map[string].append(file_name)
         return string_map
 
@@ -252,15 +254,44 @@ class Application:
         output_workbook, output_sheet = self.create_output_workbook()
         total_files = len(string_list)
         for i, string in enumerate(string_list):
-            if not string_map[string]:  # If no files matched, still add to the output
-                output_sheet.append([string, "", original_texts[i], "", "0.00%"])
-            else:
+            if string_map[string]:  # It'll match when the audio file is existing
                 for file_name in string_map[string]:
                     audio_text, overlap_rate_percentage = self.process_single_file(string, file_name, original_texts, folder_path, server_url, i)
-                    output_sheet.append([string, file_name, original_texts[i], audio_text, f"{overlap_rate_percentage:.2f}%"])
+                    row = [string, file_name, original_texts[i], audio_text, f"{overlap_rate_percentage:.2f}%", self.evaluate_match(overlap_rate_percentage)]
+                    output_sheet.append(row)
+                    self.set_row_background(output_sheet, output_sheet.max_row, overlap_rate_percentage)
+
             self.update_progress(progress_bar, progress_info, i, total_files)
-        output_workbook.save(os.path.join(save_folder_path, "匹配结果.xlsx"))
+
+        # Adjust column widths to fit content
+        for column_cells in output_sheet.columns:
+            max_length = 0
+            column = column_cells[0].column_letter  # Get the column name
+            for cell in column_cells:
+                try:
+                    if len(str(cell.value)) > max_length:
+                        max_length = len(str(cell.value))
+                except:
+                    pass
+            adjusted_width = (max_length * 2 + 2)
+            output_sheet.column_dimensions[column].width = adjusted_width
+
+        input_file_name = os.path.splitext(os.path.basename(self.file_path_var.get()))[0]
+        current_date = datetime.datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+        output_file_name = f"{input_file_name}_ASR_{current_date}.xlsx"
+        output_workbook.save(os.path.join(save_folder_path, output_file_name))
         progress_window.destroy()
+
+
+    def set_row_background(self, sheet, row_index, overlap_rate_percentage):
+        fill_color = "FFFFFF"  # Default to white
+        if overlap_rate_percentage < 40:
+            fill_color = "FF0000"  # Red
+        elif overlap_rate_percentage < 80:
+            fill_color = "FFFF00"  # Yellow
+
+        for cell in sheet[row_index]:
+            cell.fill = openpyxl.styles.PatternFill(start_color=fill_color, end_color=fill_color, fill_type="solid")
 
     def create_progress_window(self):
         progress_window = ttk.Toplevel(self.master)
@@ -277,8 +308,16 @@ class Application:
         output_workbook = openpyxl.Workbook()
         output_sheet = output_workbook.active
         output_sheet.title = "匹配结果"
-        output_sheet.append(["字符串", "文件名", "原文本", "录制文本", "重合率"])
+        output_sheet.append(["理论名字", "音频文件名", "台本", "识别文本", "正确率", "标识备注"])
         return output_workbook, output_sheet
+    
+    def evaluate_match(self,overlap_rate_percentage):
+        if overlap_rate_percentage < 40:
+            return "文本不一致"
+        elif overlap_rate_percentage < 80:
+            return "漏词"
+        else:
+            return "基本一致"
 
     def process_single_file(self, string, file_name, original_texts, folder_path, server_url, index):
         if not file_name:
@@ -293,10 +332,10 @@ class Application:
         return audio_text, overlap_rate_percentage
 
     def calculate_overlap_rate(self, original_text, recorded_text):
-        original_text_set = set(original_text)
-        recorded_text_set = set(recorded_text)
-        overlap_count = len(original_text_set & recorded_text_set)
-        return overlap_count / max(len(original_text_set), len(recorded_text_set)) if original_text_set and recorded_text_set else 0
+        original_pinyin = set(lazy_pinyin(original_text))
+        recorded_pinyin = set(lazy_pinyin(recorded_text))
+        overlap_count = len(original_pinyin & recorded_pinyin)
+        return overlap_count / max(len(original_pinyin), len(recorded_pinyin)) if original_pinyin and recorded_pinyin else 0
 
     def update_progress(self, progress_bar, progress_info, current, total):
         progress_bar['value'] = (current + 1) / total * 100
